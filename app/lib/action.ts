@@ -6,25 +6,47 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
 
+
+
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 
 const FormSchema = z.object({
     id:z.string(),
-    customerId:z.string(),
-    amount:z.coerce.number(),
-    status:z.enum(['paid','pending']),
+    customerId:z.string({invalid_type_error:'Customer is required'}),
+    amount:z.coerce.number().gt(0,{message:'Amount must be greater than 0'}),
+    status:z.enum(['paid','pending'],{invalid_type_error:'Status is required'}),
     date:z.string().optional()
+
 })
+
+export type State = {
+  errors?: {
+    customerId?: string[];
+    amount?: string[];
+    status?: string[];
+  };
+  message?: string | null;
+};
 
 const CreateInvoice = FormSchema.omit({id:true,date:true})
 const UpdateInvoice = FormSchema.omit({id:true,date:true})
 
-export async function createInvoice(data:FormData){
-    const {customerId,amount,status} = CreateInvoice.parse({
+export async function createInvoice(prevState:State,data:FormData){
+    const validatedFields = CreateInvoice.safeParse({
         customerId:data.get('customerId'),
         amount:data.get('amount'),
         status:data.get('status'),
     })
+
+    if(!validatedFields.success){
+        const fieldErrors = validatedFields.error.flatten().fieldErrors;
+        return{
+            errors:{fieldErrors},
+            message:"Missing Fields. Failed to Create Invoice."
+        }
+    }
+
+    const { customerId, amount, status } = validatedFields.data;
 
     const amountinCents = amount*100;
     const date = new Date().toISOString().split('T')[0];
@@ -45,12 +67,21 @@ export async function createInvoice(data:FormData){
     redirect('/dashboard/invoices');
 }
 
-export async function updateInvoice(id: string, data: FormData) {
-    const { customerId, amount, status } = UpdateInvoice.parse({
+export async function updateInvoice(id: string,prevState:State, data: FormData) {
+    const validatedFields = UpdateInvoice.safeParse({
         customerId: data.get('customerId'),
         amount: data.get('amount'),
         status: data.get('status'),
     })
+
+    if(!validatedFields.success){
+        const fieldErrors = validatedFields.error.flatten().fieldErrors;
+        return{
+            errors:{fieldErrors},
+            message:"Missing Fields. Failed to Update Invoice."
+        }
+    }
+    const {customerId,amount,status} = validatedFields.data;
 
     const amountinCents = amount*100;
 
@@ -75,7 +106,6 @@ export async function updateInvoice(id: string, data: FormData) {
 }
 
 export async function deleteInvoice(id: string) {
-    throw new Error('Delete invoice not implemented yet');
   await sql`DELETE FROM invoices WHERE id = ${id}`;
   revalidatePath('/dashboard/invoices');
 }
